@@ -75,4 +75,3 @@ leisure-teatime 是一个 Python 工具，专注于基于 URL 生成任务并执
   - 项目采用 MIT 许可，详见 `LICENSE` 文件。
 
 - 项目使用 PDM 而非传统 pip，需额外安装 PDM（建议使用 `pipx` 进行安装），这可能对新用户不熟悉，可能增加初始学习成本。
-
