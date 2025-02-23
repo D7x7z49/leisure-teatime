@@ -1,6 +1,7 @@
 # work/tools/task_generator.py
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Union
 from urllib.parse import urlparse
 import click
 import requests
@@ -15,21 +16,21 @@ class TaskOptions:
     """Task generation options"""
     url: str
     force: bool = False
-    timeout: int = 5
+    timeout: int = 12
     quiet: bool = False
     silent: bool = False
 
 @dataclass
 class TaskContext(BaseContext):
     """Task-specific execution context"""
-    options: TaskOptions | None = None
+    options: Union[TaskOptions, None] = None
 
     def __post_init__(self):
         """Ensure options is set before use"""
         if self.options is None:
             raise ValueError("TaskContext.options must be provided")
 
-def fetch_html(context: TaskContext) -> str | None:
+def fetch_html(context: TaskContext):
     """Fetch HTML content from URL, return None if not HTML"""
     try:
         response = requests.get(context.options.url, timeout=context.options.timeout)
@@ -43,7 +44,7 @@ def fetch_html(context: TaskContext) -> str | None:
         context.log(f"{CL.DETAIL_PREFIX} Fetch failed: {e}")
         return None
 
-def parse_domain(context: TaskContext) -> list[str]:
+def parse_domain(context: TaskContext):
     """Parse URL domain into parts"""
     parsed = urlparse(context.options.url)
     context.log(f"{CL.STEP_PREFIX} Parsing domain")
@@ -54,7 +55,7 @@ def parse_domain(context: TaskContext) -> list[str]:
     context.log(f"{CL.DETAIL_PREFIX} Parts: {domain_parts}")
     return domain_parts
 
-def parse_path(context: TaskContext) -> list[str]:
+def parse_path(context: TaskContext):
     """Parse URL path into parts"""
     parsed = urlparse(context.options.url)
     context.log(f"{CL.STEP_PREFIX} Parsing path")
@@ -65,7 +66,7 @@ def parse_path(context: TaskContext) -> list[str]:
     context.log(f"{CL.DETAIL_PREFIX} Parts: {path_parts}")
     return path_parts
 
-def create_task_dir(context: TaskContext, domain_parts: list[str], path_parts: list[str]) -> Path:
+def create_task_dir(context: TaskContext, domain_parts, path_parts):
     """Create task directory and return path"""
     task_dir = (CG.ROOT_DIR / CT.TASKS_DIR).joinpath(*domain_parts, *path_parts)
     context.log(f"{CL.STEP_PREFIX} Creating directory")
@@ -73,7 +74,7 @@ def create_task_dir(context: TaskContext, domain_parts: list[str], path_parts: l
     context.log(f"{CL.DETAIL_PREFIX} Dir: {task_dir}")
     return task_dir
 
-def setup_main_file(context: TaskContext, task_dir: Path) -> Path:
+def setup_main_file(context: TaskContext, task_dir: Path):
     """Setup main.py file in task directory"""
     main_file = task_dir / CT.DEFAULT_MAIN
     context.log(f"{CL.STEP_PREFIX} Setting up main file")
@@ -87,7 +88,7 @@ def setup_main_file(context: TaskContext, task_dir: Path) -> Path:
     context.log(f"{CL.DETAIL_PREFIX} File: {main_file}")
     return main_file
 
-def setup_html_file(context: TaskContext, task_dir: Path) -> Path:
+def setup_html_file(context: TaskContext, task_dir: Path):
     """Setup HTML file with fetched content or default"""
     html_file = task_dir / CT.DEFAULT_HTML
     context.log(f"{CL.STEP_PREFIX} Fetching HTML content")
@@ -124,7 +125,7 @@ def generate_task(context: TaskContext) -> str:
 @click.command()
 @click.argument("url")
 @click.option("--force", "-f", is_flag=True, help="Force update files")
-@click.option("--timeout", "-t", type=int, default=5, help="Request timeout in seconds")
+@click.option("--timeout", "-t", type=int, default=12, help="Request timeout in seconds")
 @click.option("--quiet", "-q", is_flag=True, help="Show minimal logs")
 @click.option("--silent", "-s", is_flag=True, help="Log to file only")
 def main(url: str, **kwargs) -> None:
