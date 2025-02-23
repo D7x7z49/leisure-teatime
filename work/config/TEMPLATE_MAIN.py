@@ -14,3 +14,8 @@ def execute(data, known_vars):
         known_vars["title"] = "No HTML data provided"
 
     print(__file__)
+
+
+if __name__ == "__main__":
+
+    pass
