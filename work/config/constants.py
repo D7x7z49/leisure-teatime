@@ -9,6 +9,15 @@ class GlobalConfig:
     ROOT_DIR = Path(__file__).parent.parent
 
 @dataclass
+class PersistentConfig:
+    """Global configuration"""
+    EXECUTABLE_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    USER_DATA_DIR = GlobalConfig.ROOT_DIR / ".playwright_user_data"
+    SCRIPT_TASKS_DIR = GlobalConfig.ROOT_DIR / "script"
+    JS_TASKS_DIR = SCRIPT_TASKS_DIR / "js"
+    PY_TASKS_DIR = SCRIPT_TASKS_DIR / "py"
+
+@dataclass
 class TasksConfig:
     """Task generation configuration"""
     TASKS_DIR = "tasks"
