@@ -23,25 +23,19 @@ MSG = {
 
 COMMANDS: Dict[str, Callable] = {}
 
-def command(name):
-    """register command"""
-    def decorator(func):
-        COMMANDS[name] = func
-        return func
-    return decorator
-
 def load_py_commands():
     """load commands from PY_TASKS_DIR"""
     print(f"Scanning: {CP.PY_TASKS_DIR}")
     for py_file in CP.PY_TASKS_DIR.glob("cmd_*.py"):
         try:
-            spec = importlib.util.spec_from_file_location(py_file.stem, py_file)
+            module_name = f"work.script.py.{py_file.stem}"
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
             module = importlib.util.module_from_spec(spec)
-            # Inject command and COMMANDS into module namespace
-            module.command = command
-            module.COMMANDS = COMMANDS
             spec.loader.exec_module(module)
-            logall_msg(MSG["load_cmd"].format(file=py_file.name), "INFO")
+            # Call module's register_commands if exists
+            if hasattr(module, "register_commands"):
+                module.register_commands(COMMANDS)
+                logall_msg(MSG["load_cmd"].format(file=py_file.name), "INFO")
         except Exception as e:
             logall_msg(f"Failed to load {py_file.name}: {e}", "ERROR")
     print(f"Loaded commands: {list(COMMANDS.keys())}")
@@ -55,6 +49,7 @@ class PlaywrightTool:
     async def start(self):
         """launch browser and start interaction"""
         load_py_commands()
+        register_base_commands()  # Register base commands after extensions
         async with async_playwright() as p:
             self.context = await p.chromium.launch_persistent_context(
                 executable_path=CP.EXECUTABLE_PATH,
@@ -76,12 +71,7 @@ class PlaywrightTool:
                 cmd = (await session.prompt_async()).strip().split()
                 if not cmd: continue
                 cmd_name, args = cmd[0].lower(), cmd[1:]
-                if cmd_name == "exit":
-                    await self.context.close()
-                    logall_msg(MSG["exit"], "INFO")
-                    print("Goodbye.")
-                    break
-                elif cmd_name in COMMANDS:
+                if cmd_name in COMMANDS:
                     await COMMANDS[cmd_name](self.page, *args)
                 else:
                     print(f"Unknown command: {cmd_name}. Try 'help'.")
@@ -97,65 +87,67 @@ class PlaywrightTool:
                     print("Browser closed. Exiting.")
                     break
 
-@command("help")
-async def help_cmd(page):
-    """list all commands with descriptions
-    usage: help
-    """
-    print("Available commands:")
-    for name, func in sorted(COMMANDS.items()):
-        print(f"  {name}\t# {' '.join(line.strip() for line in func.__doc__.splitlines())}")
+def register_base_commands():
+    """register base commands"""
+    async def help_cmd(page):
+        """list all commands with descriptions
+        usage: help
+        """
+        print("Available commands:")
+        for name, func in sorted(COMMANDS.items()):
+            print(f"  {name}\t# {' '.join(line.strip() for line in func.__doc__.splitlines())}")
+    COMMANDS["help"] = help_cmd
 
-@command("list")
-async def list_tasks(page):
-    """list js tasks
-    usage: list
-    """
-    tasks = [f.name for f in CP.JS_TASKS_DIR.glob("*.js")]
-    print(f"JS tasks: {', '.join(tasks)}" if tasks else "No JS tasks.")
+    async def list_tasks(page):
+        """list js tasks
+        usage: list
+        """
+        tasks = [f.name for f in CP.JS_TASKS_DIR.glob("*.js")]
+        print(f"JS tasks: {', '.join(tasks)}" if tasks else "No JS tasks.")
+    COMMANDS["list"] = list_tasks
 
-@command("load")
-async def load_task(page, task_name):
-    """load and run js task
-    usage: load <task_name>
-    - <task_name>: name of js file (e.g., test)
-    """
-    task_path = CP.JS_TASKS_DIR / f"{task_name}.js"
-    if not task_path.exists():
-        print(f"Task '{task_name}.js' not found.")
-        return
-    result = await page.evaluate(open(task_path, "r", encoding="utf-8").read())
-    print(f"Task '{task_name}.js' executed. Result: {result}")
+    async def load_task(page, task_name):
+        """load and run js task
+        usage: load <task_name>
+        - <task_name>: name of js file (e.g., test)
+        """
+        task_path = CP.JS_TASKS_DIR / f"{task_name}.js"
+        if not task_path.exists():
+            print(f"Task '{task_name}.js' not found.")
+            return
+        result = await page.evaluate(open(task_path, "r", encoding="utf-8").read())
+        print(f"Task '{task_name}.js' executed. Result: {result}")
+    COMMANDS["load"] = load_task
 
-@command("goto")
-async def goto_url(page, url):
-    """navigate to url
-    usage: goto <url>
-    - <url>: target website address (e.g., cnblogs.com)
-    """
-    if not url:
-        print("URL required.")
-        return
-    parsed = urlparse(url if urlparse(url).scheme else f"https://{url}")
-    if parsed.scheme not in ("http", "https"):
-        print(f"Unsupported protocol: {parsed.scheme}. Use http or https.")
-        return
-    full_url = urlunparse(parsed)
-    try:
-        await page.goto(full_url)
-        print(f"Navigated to: {full_url}")
-    except Exception as e:
-        http_url = urlunparse(parsed._replace(scheme="http")) if parsed.scheme == "https" else None
-        await (page.goto(http_url) or print(f"Navigated to: {http_url}")) if http_url else print(f"Navigation failed: {e}")
+    async def goto_url(page, url):
+        """navigate to url
+        usage: goto <url>
+        - <url>: target website address (e.g., cnblogs.com)
+        """
+        if not url:
+            print("URL required.")
+            return
+        parsed = urlparse(url if urlparse(url).scheme else f"https://{url}")
+        if parsed.scheme not in ("http", "https"):
+            print(f"Unsupported protocol: {parsed.scheme}. Use http or https.")
+            return
+        full_url = urlunparse(parsed)
+        try:
+            await page.goto(full_url)
+            print(f"Navigated to: {full_url}")
+        except Exception as e:
+            http_url = urlunparse(parsed._replace(scheme="http")) if parsed.scheme == "https" else None
+            await (page.goto(http_url) or print(f"Navigated to: {http_url}")) if http_url else print(f"Navigation failed: {e}")
+    COMMANDS["goto"] = goto_url
 
-@command("exit")
-async def exit_tool(page):
-    """exit tool
-    usage: exit
-    """
-    await page.context.close()
-    logall_msg(MSG["exit"], "INFO")
-    print("Goodbye.")
+    async def exit_tool(page):
+        """exit tool
+        usage: exit
+        """
+        await page.context.close()
+        logall_msg(MSG["exit"], "INFO")
+        print("Goodbye.")
+    COMMANDS["exit"] = exit_tool
 
 async def main():
     """run tool"""
