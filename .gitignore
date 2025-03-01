@@ -162,5 +162,6 @@ cython_debug/
 #.idea/
 
 /work/*
+/.browser/
 /.mise.toml
-.browser
+/commit-message.txt
