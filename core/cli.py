@@ -118,10 +118,9 @@ def task_remove(name, force=False):
 
 @cli.command("task-exec")
 @click.argument("task_name")
-@click.option("--file", default="main", help="Script file to execute (main or test)")
-@click.option("--data", default="index.html", help="HTML file to use as data (index.html or dom.html)")
+@click.option("--file", default="main", help="Script file to execute (main, test, or text)")
 @click.option("--verbose", is_flag=True, help="Print execution results verbosely")
-def task_exec(task_name, file="main", data="index.html", verbose=False):
+def task_exec(task_name, file="main", verbose=False):
     """Execute a task script."""
     config = read_json(_TASK_CONFIG) or {"tasks": {}}
     tasks = config.get("tasks", {})
@@ -141,14 +140,14 @@ def task_exec(task_name, file="main", data="index.html", verbose=False):
 
     click.echo("=== Task Execution GO ===")
     if hasattr(module, "execute"):
-        known_vars = module.execute(task_dir=task_dir, file_name=data)
+        known_vars = module.execute(task_dir=task_dir)
         if verbose:
             click.echo("=== Task Results ===")
-            click.echo(f"Results:\n{json.dumps(known_vars, indent=2)}")
+            click.echo(f"Results:\n{json.dumps(known_vars, indent=2, ensure_ascii=False)}")
             click.echo("=== Task Results ===")
         else:
             click.echo(f"Executed {task_name}/{file}.py successfully")
-        logger.info(f"Executed task: {task_name}/{file}.py with data from {data}")
+        logger.info(f"Executed task: {task_name}/{file}.py")
     else:
         click.echo(f"No 'execute' function found in {script_file}")
         logger.error(f"No 'execute' function in {script_file}")

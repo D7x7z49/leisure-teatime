@@ -40,6 +40,7 @@ class TemplatesConfig:
     DIR = PROJECT_ROOT / "templates"
     FILES = [
         {"source": "MAIN.py", "target": "main.py"},
+        {"source": "TEXT.py", "target": "text.py"},
         {"source": "TEST.py", "target": "test.py"}
     ]
 

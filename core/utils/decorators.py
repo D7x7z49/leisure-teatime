@@ -55,15 +55,23 @@ def log_args(func: Callable) -> Callable:
         return result
     return wrapper
 
-def task_runner(file_name: str = "index.html"):
-    """Decorator to inject task data and known_vars into execute function."""
+def task_runner(script_path: Path, html_file: str = "index.html"):
+    """Decorator to inject task data and known_vars into execute function.
+
+    Args:
+        script_path (Path): Path to the script file (e.g., Path(__file__)).
+        html_file (str): Name of the HTML file in the task directory (e.g., 'index.html').
+    """
     def decorator(func: Callable):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            task_dir = kwargs.get("task_dir", Path(sys.argv[0]).parent if "__file__" in globals() else Path.cwd())
-            data_file = kwargs.get("file_name", file_name)
-            data = read_file(task_dir / data_file) or ""
+            # Determine task directory: CLI-provided task_dir takes priority over script_path
+            task_dir = kwargs.get("task_dir", script_path.parent)
+            # Load data from specified HTML file
+            data = read_file(task_dir / html_file) or ""
             known_vars = {}
+
+            # Execute function
             result = func(data, known_vars)
             logger.debug(f"Task executed with known_vars: {known_vars}")
             return known_vars or result
