@@ -6,8 +6,8 @@ import asyncio
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from core.config import Config
-from core.utils.files import ensure_dir, read_json, write_file, write_json
-from core.utils.cli import generate_task_name, generate_task_dir, update_json_config
+from core.utils.files import read_json, write_file, write_json
+from core.utils.path import generate_task_name, generate_task_dir
 from core.logging import get_logger, LogTemplates
 from core.fetchers.browser import fetch_page, analyze_page, AsyncBrowserManager
 
@@ -48,7 +48,8 @@ def task_add(url, name=None, quiet=False):
     if result and "content" in result:
         [write_file(task_dir / fname, content) for fname, content in
          [("index.html", result["content"]), ("main.py", "# Crawler script\n")]]
-        update_json_config(Config.WORK.TASK_CONFIG_FILE, "tasks", task_name, {
+        config = read_json(Config.WORK.TASK_CONFIG_FILE) or {"tasks": {}}
+        config["tasks"][task_name] = {
             **{k: v for k, v in {
                 "url": url,
                 "dir": str(task_dir),
@@ -58,7 +59,8 @@ def task_add(url, name=None, quiet=False):
                 "created": time.time(),
             }.items()},
             "is_dynamic": result["is_dynamic"]
-        })
+        }
+        write_json(Config.WORK.TASK_CONFIG_FILE, config)
         if not quiet:
             click.echo(f"Task added: {task_name} at {task_dir} ({result['is_dynamic']})")
         logger.info(LogTemplates.TASK_CREATED.format(task_name=task_name))
@@ -102,13 +104,15 @@ def task_remove(name, force=False):
 def script_add(script_path, name=None):
     """Add a script to the collection."""
     script_name = name or Path(script_path).stem
-    script_dir = ensure_dir(Config.WORK.SCRIPT_DIR / script_name)
+    script_dir = Config.WORK.SCRIPT_DIR / script_name
     write_file(script_dir / f"{script_name}.py", Path(script_path).read_text())
-    update_json_config(Config.WORK.SCRIPT_CONFIG_FILE, "scripts", script_name, {
+    config = read_json(Config.WORK.SCRIPT_CONFIG_FILE) or {"scripts": {}}
+    config["scripts"][script_name] = {
         "dir": str(script_dir),
         "created": time.time(),
         "type": "python" if script_path.endswith(".py") else "javascript"
-    })
+    }
+    write_json(Config.WORK.SCRIPT_CONFIG_FILE, config)
     click.echo(f"Script added: {script_name} at {script_dir}")
     logger.info(f"Script added: {script_name}")
 
