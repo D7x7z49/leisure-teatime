@@ -5,22 +5,29 @@ from core.config import Config
 from core.logging import get_logger, LogTemplates
 from core.utils.files import ensure_dir
 from functools import wraps
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Tuple
 
 logger = get_logger("browser")
 
-# Sync decorator for page injection
+# Private config variables for brevity and efficiency
+_USER_DATA_DIR = Config.BROWSER.USER_DATA_DIR
+_HEADLESS = Config.BROWSER.HEADLESS
+_TIMEOUT = Config.BROWSER.TIMEOUT
+_BLOCKED_RESOURCES = Config.BROWSER.BLOCKED_RESOURCES
+_EXECUTABLE_PATH = Config.BROWSER.EXECUTABLE_PATH
+
 def with_sync_page(func: Callable) -> Callable:
+    """Decorator to inject a Playwright page for sync operations."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         with sync_playwright() as p:
             context = p.chromium.launch_persistent_context(
-                user_data_dir=str(ensure_dir(Config.BROWSER.USER_DATA_DIR)),
-                headless=Config.BROWSER.HEADLESS,
-                executable_path=Config.BROWSER.EXECUTABLE_PATH,
+                user_data_dir=str(ensure_dir(_USER_DATA_DIR)),
+                headless=_HEADLESS,
+                executable_path=_EXECUTABLE_PATH,
             )
             page = context.new_page()
-            for pattern in Config.BROWSER.BLOCKED_RESOURCES:
+            for pattern in _BLOCKED_RESOURCES:
                 page.route(pattern, lambda route: route.abort())
             try:
                 return func(page, *args, **kwargs)
@@ -28,28 +35,39 @@ def with_sync_page(func: Callable) -> Callable:
                 context.close()
     return wrapper
 
-# Sync commands
 @with_sync_page
-def fetch_page(page: Page, url: str, timeout: int = Config.BROWSER.TIMEOUT) -> str:
-    """Fetch page content."""
+def fetch_page(page: Page, url: str, timeout: int = _TIMEOUT) -> Tuple[str, str, int]:
+    """Fetch raw content, rendered content, and resource count in one pass."""
     logger.info(LogTemplates.FETCH_START.format(url=url))
-    page.goto(url, timeout=timeout)
-    content = page.content()
-    logger.info(LogTemplates.FETCH_SUCCESS.format(url=url, size=len(content)))
-    return content
+    resources = []
+    raw_content = None
+
+    def capture_response(response):
+        nonlocal raw_content
+        if response.url == url:
+            raw_content = response.text()
+
+    page.on("response", capture_response)
+    page.on("response", lambda r: resources.append(r.url))
+    page.goto(url, timeout=timeout, wait_until="networkidle")
+    dom_content = page.content()
+    resource_count = len(set(resources))
+
+    logger.info(LogTemplates.FETCH_SUCCESS.format(url=url, size=len(dom_content)))
+    logger.debug(f"Loaded {resource_count} unique resources")
+    return raw_content or "", dom_content, resource_count
 
 @with_sync_page
-def analyze_page(page: Page, url: str, timeout: int = Config.BROWSER.TIMEOUT) -> dict:
+def analyze_page(page: Page, url: str, timeout: int = _TIMEOUT) -> Dict[str, Any]:
     """Analyze page dynamism."""
     logger.info(LogTemplates.FETCH_START.format(url=url))
-    page.goto(url, timeout=timeout)
+    page.goto(url, timeout=timeout, wait_until="networkidle")
     initial_content = page.evaluate("document.documentElement.outerHTML")
     final_content = page.content()
     is_dynamic = "partial" if final_content != initial_content else "static"
     logger.info(LogTemplates.FETCH_SUCCESS.format(url=url, size=len(final_content)))
     return {"content": final_content, "is_dynamic": is_dynamic}
 
-# Async Browser Manager for TUI
 class AsyncBrowserManager:
     """Manage async Playwright browser instance for interactive use."""
     _instance = None
@@ -68,16 +86,17 @@ class AsyncBrowserManager:
         return cls._instance
 
     async def _initialize(self):
-        """Initialize persistent browser context."""
+        """Initialize persistent browser context with DevTools enabled."""
         self._playwright = await async_playwright().start()
         try:
-            user_data_dir = str(ensure_dir(Config.BROWSER.USER_DATA_DIR))
+            user_data_dir = str(ensure_dir(_USER_DATA_DIR))
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
-                headless=Config.BROWSER.HEADLESS,
-                executable_path=Config.BROWSER.EXECUTABLE_PATH,
+                headless=_HEADLESS,
+                executable_path=_EXECUTABLE_PATH,
+                devtools=True,  # 默认启用 DevTools
             )
-            logger.debug(f"Initialized async browser context with {user_data_dir}")
+            logger.debug(f"Initialized async browser context with {user_data_dir}, DevTools enabled")
         except Exception as e:
             logger.error(LogTemplates.ERROR.format(msg=f"Browser init failed: {e}"))
             raise
@@ -111,6 +130,7 @@ class AsyncBrowserManager:
 # Async commands for TUI
 @AsyncBrowserManager.register("fetch", help="Fetch page content from URL. Usage: fetch <url>")
 async def fetch_url(page: Page, url: str) -> str:
+    """Fetch page content asynchronously."""
     content = await page.goto(url)
     if content:
         text = await page.content()
@@ -120,5 +140,6 @@ async def fetch_url(page: Page, url: str) -> str:
 
 @AsyncBrowserManager.register("js", help="Run JavaScript code in browser. Usage: js <code>")
 async def run_js(page: Page, code: str) -> str:
+    """Run JavaScript code asynchronously."""
     result = await page.evaluate(code)
     return f"Result: {result}"

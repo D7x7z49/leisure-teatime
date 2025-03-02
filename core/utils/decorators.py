@@ -2,7 +2,10 @@
 from functools import wraps
 from typing import Callable
 import time
+import sys
+from pathlib import Path
 from core.logging import get_logger, LogTemplates
+from core.utils.files import read_file  # 导入 files.read_file
 
 logger = get_logger("utils.decorators")
 
@@ -51,6 +54,21 @@ def log_args(func: Callable) -> Callable:
         logger.debug(f"{func.__name__} returned {result}")
         return result
     return wrapper
+
+def task_runner(file_name: str = "index.html"):
+    """Decorator to inject task data and known_vars into execute function."""
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            task_dir = kwargs.get("task_dir", Path(sys.argv[0]).parent if "__file__" in globals() else Path.cwd())
+            data_file = kwargs.get("file_name", file_name)
+            data = read_file(task_dir / data_file) or ""
+            known_vars = {}
+            result = func(data, known_vars)
+            logger.debug(f"Task executed with known_vars: {known_vars}")
+            return known_vars or result
+        return wrapper
+    return decorator
 
 if __name__ == "__main__":
     @timing
