@@ -147,7 +147,7 @@ def generate_deploy(output_dir: str = "dist", compression_level: int = 9):
 
     try:
         # 收集文件
-        dirs_to_pack = ["core", "tools"]
+        dirs_to_pack = ["core", "tools", "templates"]
         extra_files = ["pyproject.toml", ".editorconfig"]
         files = collect_files(dirs_to_pack, extra_files)
 
