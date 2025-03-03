@@ -2,14 +2,17 @@
 import importlib
 import json
 from pathlib import Path
+import shlex
 import time
 import click
 import asyncio
 import shutil
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import NestedCompleter, WordCompleter
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
 from core.config import Config
-from core.utils.files import read_file, read_json, write_file, write_json
+from core.utils.files import ensure_dir, read_file, read_json, write_file, write_json
 from core.utils.path import generate_task_name, generate_task_dir
 from core.logging import get_logger, LogTemplates
 from core.fetchers.browser import fetch_page, analyze_page, AsyncBrowserManager
@@ -154,38 +157,49 @@ def task_exec(task_name, file="main", verbose=False):
     click.echo("=== Task Execution ED ===")
 
 @cli.command("script-add")
-@click.argument("script_path", type=click.Path(exists=True))
-@click.option("--name", help="Custom script name")
-def script_add(script_path, name=None):
-    """Add a script to the collection."""
-    script_name = name or Path(script_path).stem
-    script_dir = _SCRIPT_DIR / script_name
-    write_file(script_dir / f"{script_name}.py", Path(script_path).read_text())
-    config = read_json(_SCRIPT_CONFIG) or {"scripts": {}}
-    config["scripts"][script_name] = {
-        "dir": str(script_dir),
-        "created": time.time(),
-        "type": "python" if script_path.endswith(".py") else "javascript"
-    }
-    write_json(_SCRIPT_CONFIG, config)
-    click.echo(f"Script added: {script_name} at {script_dir}")
-    logger.info(f"Script added: {script_name}")
+@click.argument("script_name")
+@click.option("--request", is_flag=True, help="Add as a request task instead of a TUI command")
+@click.option("--method", default="GET", help="HTTP method for request task (e.g., GET, POST)")
+def script_add(script_name, request=False, method="GET"):
+    """Add a script to SCRIPT_DIR as a TUI command or request task."""
+    script_dir = ensure_dir(_SCRIPT_DIR / script_name)
+    script_file = script_dir / f"{script_name}.py"
+
+    template = Config.TEMPLATES.REQUEST_TEMPLATE if request else Config.TEMPLATES.TUI_CMD_TEMPLATE
+    help_text = f"Execute {script_name} {'request' if request else 'command'}"
+    docstring = f"Custom {'request' if request else 'command'} for {script_name}"
+    content = template.format(
+        filename=script_file.name,
+        cmd_name=script_name,
+        func_name=f"run_{script_name.replace('-', '_')}",
+        method=method.upper(),
+        help_text=help_text,
+        docstring=docstring
+    )
+
+    if write_file(script_file, content):
+        click.echo(f"Script added: {script_file}")
+        logger.info(f"Script added: {script_file}")
+    else:
+        click.echo(f"Failed to add script: {script_file}")
 
 @cli.command("script-list")
 def script_list():
-    """List all scripts."""
+    """List all scripts in SCRIPT_DIR."""
     config = read_json(_SCRIPT_CONFIG) or {"scripts": {}}
     scripts = config.get("scripts", {})
     if not scripts:
         click.echo("No scripts found")
         return
-    [click.echo(f"{name} ({data['type']}) - {data['dir']}") for name, data in scripts.items()]
+    for name, data in scripts.items():
+        script_type = "Request" if "method" in data else "Command"
+        click.echo(f"{name} ({script_type}) - {data['dir']}")
 
 @cli.command("script-remove")
 @click.argument("name")
 @click.option("--force", is_flag=True, help="Force removal without confirmation")
 def script_remove(name, force=False):
-    """Remove a script."""
+    """Remove a script from SCRIPT_DIR."""
     config = read_json(_SCRIPT_CONFIG) or {"scripts": {}}
     scripts = config.get("scripts", {})
     if name not in scripts:
@@ -202,35 +216,95 @@ def script_remove(name, force=False):
 
 @cli.command("interactive")
 def interactive():
+    """Start an interactive TUI shell."""
+    bindings = KeyBindings()
+
+    @bindings.add("c-c")
+    def _(event):
+        """Exit TUI with Ctrl+C."""
+        event.app.exit()
+
     async def run_tui():
         browser = await AsyncBrowserManager.instance()
         page = await browser.new_page()
+        await page.goto("about:blank")  # 初始化页面
+
+        # 命令补全
         commands = list(AsyncBrowserManager._registry.keys()) + ["exit", "help"]
         completer = WordCompleter(commands, ignore_case=True)
-        session = PromptSession("TUI> ", completer=completer, complete_while_typing=True)
 
-        click.echo("Interactive TUI started. Type 'help' for commands, 'exit' to quit.")
-        try:
-            while True:
-                cmd = await session.prompt_async()
+        # 会话配置
+        history_path = str(ensure_dir(_SCRIPT_DIR / ".tui_history") / "history")
+        session = PromptSession(
+            "TUI> ",
+            completer=completer,
+            complete_while_typing=True,
+            history=FileHistory(history_path),
+            key_bindings=bindings,
+            multiline=False
+        )
+
+        click.echo("Interactive TUI started. Type 'help' for commands, 'exit' or Ctrl+C to quit.")
+        while True:
+            try:
+                # 动态提示符显示页面 URL
+                url = page.url if not page.is_closed() else "Closed"
+                prompt = f"TUI ({url[:20]}...)> " if len(url) > 20 else f"TUI ({url})> "
+                cmd = await session.prompt_async(prompt)
+
                 cmd = cmd.strip()
+                if not cmd:
+                    continue
                 if cmd == "exit":
                     break
-                if cmd == "help":
-                    [click.echo(f"{n}: {i['help']}") for n, i in AsyncBrowserManager._registry.items()]
-                elif cmd:
-                    parts = cmd.split(" ", 1)
-                    cmd_name, args = parts[0], parts[1] if len(parts) > 1 else ""
+                parts = shlex.split(cmd)
+                cmd_name, args = parts[0], parts[1:] if len(parts) > 1 else []
+
+                if cmd_name == "help":
+                    if not args:
+                        # 显示所有命令的简短帮助
+                        click.echo("Available commands:")
+                        for name, info in AsyncBrowserManager._registry.items():
+                            short_help = info['help'].split('\n')[0]  # 提取第一行作为简短描述
+                            click.echo(f"  {name}: {short_help}")
+                    elif len(args) == 1:
+                        # 显示指定命令的详细帮助
+                        help_cmd = args[0]
+                        if help_cmd in AsyncBrowserManager._registry:
+                            click.echo(AsyncBrowserManager._registry[help_cmd]['help'])
+                        else:
+                            click.echo(f"Unknown command: {help_cmd}")
+                    else:
+                        click.echo("Usage: help [command]")
+                else:
+                    # 检查页面是否关闭，若关闭则重新创建
+                    if page.is_closed():
+                        page = await browser.new_page()
+                        await page.goto("about:blank")
+                        logger.debug("Recreated closed page")
+
+                    # 执行命令
+                    parts = shlex.split(cmd)
+                    cmd_name, args = parts[0], parts[1:] if len(parts) > 1 else []
                     if cmd_name in AsyncBrowserManager._registry:
-                        result = await browser.execute(cmd_name, page, args)
+                        result = await browser.execute(cmd_name, page, *args)
                         click.echo(result)
                     else:
                         click.echo("Unknown command. Type 'help' for available commands.")
-        except KeyboardInterrupt:
-            click.echo("Exiting TUI...")
-        finally:
+            except Exception as e:
+                logger.error(f"TUI error: {e}")
+                click.echo(f"Error: {e}")
+                # 如果上下文关闭，退出 TUI
+                if "closed" in str(e).lower():
+                    click.echo("Browser context closed, exiting TUI...")
+                    break
+            await asyncio.sleep(1)  # 降低循环频率
+
+        # 清理资源
+        if not page.is_closed():
             await page.close()
-            await browser.close()
+        await browser.close()
+        click.echo("TUI exited.")
 
     asyncio.run(run_tui())
 
