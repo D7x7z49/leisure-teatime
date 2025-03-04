@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shlex
 import time
+from typing import Dict
 import click
 import asyncio
 import shutil
@@ -12,6 +13,7 @@ from prompt_toolkit.completion import NestedCompleter, WordCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from core.config import Config
+from core.task_manager import TaskDataManager
 from core.utils.files import ensure_dir, read_file, read_json, write_file, write_json
 from core.utils.path import generate_task_name, generate_task_dir
 from core.logging import get_logger, LogTemplates
@@ -53,13 +55,13 @@ def cli(verbose):
 
 @cli.command("task-add")
 @click.argument("url")
-@click.option("--name", help="Custom task name")
-@click.option("--quiet", is_flag=True, help="Suppress output")
-@click.option("--refresh", is_flag=True, help="Refresh HTML files without overwriting .py files")
+@click.option("-n/--name", help="Custom task name")
+@click.option("-q/--quiet", is_flag=True, help="Suppress output")
+@click.option("-r/--refresh", is_flag=True, help="Refresh HTML files without overwriting .py files")
 def task_add(url, name=None, quiet=False, refresh=False):
     """Add a task and fetch its page."""
-    task_name = name or generate_task_name(url)
-    task_dir = generate_task_dir(_TASK_DIR, task_name)
+    task_hash = TaskDataManager.generate_task_hash(url)
+    task_dir = _TASK_DIR / task_hash
     task_dir.mkdir(exist_ok=True, parents=True)
 
     if not refresh or not (task_dir / "main.py").exists():
@@ -67,81 +69,114 @@ def task_add(url, name=None, quiet=False, refresh=False):
             shutil.copy(_TEMPLATES_DIR / template["source"], task_dir / template["target"])
 
     raw_content, dom_content, resource_count = fetch_page(url)
-    if raw_content and dom_content:
-        write_file(task_dir / _RAW_HTML, raw_content)
-        write_file(task_dir / _DOM_HTML, dom_content)
-        config = read_json(_TASK_CONFIG) or {"tasks": {}}
-        config["tasks"][task_name] = {
-            "url": url,
-            "dir": str(task_dir),
-            "hash": generate_task_dir(_TASK_DIR, task_name).name,
-            "domain": task_name.split(".")[0] + "." + task_name.split(".")[1],
-            "path": ".".join(task_name.split(".")[2:]) if len(task_name.split(".")) > 2 else "",
-            "created": time.time(),
-            "is_dynamic": "partial" if raw_content != dom_content else "static",
-            "resource_count": resource_count
-        }
-        write_json(_TASK_CONFIG, config)
-        if not quiet:
-            click.echo(f"Task added: {task_name} at {task_dir} (resources: {resource_count})")
-        logger.info(LogTemplates.TASK_CREATED.format(task_name=task_name))
-    else:
-        logger.error(LogTemplates.ERROR.format(msg=f"Failed to fetch {url}"))
+    if not raw_content or not dom_content:
+        logger.error(f"Failed to fetch {url}")
+        return
+
+    write_file(task_dir / _RAW_HTML, raw_content)
+    write_file(task_dir / _DOM_HTML, dom_content)
+
+    data = TaskDataManager.load_tree()
+    current = data["tree"]
+    reversed_domain, path_parts = TaskDataManager.parse_url(url)
+
+    # 构建树路径
+    for part in reversed_domain:
+        current = current.setdefault(part, {})
+    if path_parts:
+        for part in path_parts:
+            current = current.setdefault(part, {})
+
+    task_entry = {
+        "url": url,
+        "dir": str(task_dir),
+        "hash": task_hash,
+        "created": time.time(),
+        "is_dynamic": "partial" if raw_content != dom_content else "static",
+        "resource_count": resource_count
+    }
+    current[task_hash] = task_entry
+    data["index"][task_hash] = reversed_domain + path_parts + [task_hash]
+    TaskDataManager.save_tree(data)
+
+    if not quiet:
+        click.echo(f"Task added: {task_hash} at {task_dir} (resources: {resource_count})")
+    logger.info(f"Task created: {task_hash}")
 
 @cli.command("task-list")
-@click.option("--domain", help="Filter tasks by domain")
+@click.option("-d/--domain", help="Filter tasks by domain")
 def task_list(domain=None):
     """List all tasks."""
-    config = read_json(_TASK_CONFIG) or {"tasks": {}}
-    tasks = config.get("tasks", {})
-    if not tasks:
+    data = TaskDataManager.load_tree()
+    if not data["tree"]:
         click.echo("No tasks found")
         return
-    [click.echo(f"{name} ({data.get('is_dynamic', 'unknown')}) - {data['dir']}")
-     for name, data in tasks.items() if not domain or domain in data["domain"]]
+
+    def print_tree(node: Dict, indent: int = 0):
+        for key, value in node.items():
+            if isinstance(value, dict) and "url" not in value:
+                click.echo(" " * indent + f"├─ {key}")
+                print_tree(value, indent + 2)
+            else:
+                click.echo(" " * indent + f"├─ {key} [{value.get('hash', 'N/A')}]")
+
+    click.echo("Task Tree Structure:")
+    print_tree(data["tree"])
+
+    total_tasks = TaskDataManager.count_leaf_nodes(data["tree"])
+    if total_tasks > 0:
+        latest_task = max(data["index"].items(), key=lambda x: data["tree"].get(x[0], {}).get("created", 0))
+        latest_hash, latest_path = latest_task
+        latest_node = TaskDataManager._traverse_path(data["tree"], latest_path)
+        click.echo(f"\nTotal Tasks: {total_tasks}")
+        click.echo(f"Latest Task: {latest_hash} ({latest_node.get('url', 'N/A')})")
 
 @cli.command("task-remove")
-@click.argument("name")
-@click.option("--force", is_flag=True, help="Force removal without confirmation")
-def task_remove(name, force=False):
-    """Remove a task."""
-    config = read_json(_TASK_CONFIG) or {"tasks": {}}
-    tasks = config.get("tasks", {})
-    if name not in tasks:
-        click.echo(f"Task {name} not found")
+@click.argument("task_hash")
+@click.option("-f/--force", is_flag=True, help="Force removal without confirmation")
+def task_remove(task_hash, force=False):
+    """Remove a task by hash."""
+    data = TaskDataManager.load_tree()
+    node, path = TaskDataManager.find_node(task_hash)
+    if not node:
+        click.echo(f"Task {task_hash} not found")
         return
-    task_dir = Path(tasks[name]["dir"])
-    if task_dir.exists() and (force or click.confirm(f"Remove task {name} at {task_dir}?")):
-        import shutil
+
+    task_dir = Path(node["dir"])
+    if task_dir.exists() and (force or click.confirm(f"Remove task {task_hash} at {task_dir}?")):
         shutil.rmtree(task_dir)
-        logger.info(f"Removed task: {name}")
-    del tasks[name]
-    write_json(_TASK_CONFIG, config)
-    click.echo(f"Task {name} removed{' (directory not found)' if not task_dir.exists() else ''}")
+        logger.info(f"Removed task directory: {task_hash}")
+
+    current = data["tree"]
+    for key in path[:-1]:
+        current = current[key]
+    del current[path[-1]]
+    del data["index"][task_hash]
+    TaskDataManager.save_tree(data)
+    click.echo(f"Task {task_hash} removed")
 
 @cli.command("task-exec")
-@click.argument("task_name")
-@click.option("--file", default="main", help="Script file to execute (main, test, or text)")
-@click.option("--verbose", is_flag=True, help="Print execution results verbosely")
-def task_exec(task_name, file="main", verbose=False):
-    """Execute a task script."""
-    config = read_json(_TASK_CONFIG) or {"tasks": {}}
-    tasks = config.get("tasks", {})
-    if task_name not in tasks:
-        click.echo(f"Task {task_name} not found")
+@click.argument("task_hash")
+@click.option("-f/--file", default="main", help="Script file to execute (main, test, or text)")
+@click.option("-v/--verbose", is_flag=True, help="Print execution results verbosely")
+def task_exec(task_hash, file="main", verbose=False):
+    """Execute a task script by hash."""
+    node, _ = TaskDataManager.find_node(task_hash)
+    if not node:
+        click.echo(f"Task {task_hash} not found")
         return
 
-    task_dir = Path(tasks[task_name]["dir"])
+    task_dir = Path(node["dir"])
     script_file = task_dir / f"{file}.py"
     if not script_file.exists():
         click.echo(f"Script {script_file} not found")
         return
 
-    spec = importlib.util.spec_from_file_location(f"task_{task_name}", script_file)
+    spec = importlib.util.spec_from_file_location(f"task_{task_hash}", script_file)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    click.echo("=== Task Execution GO ===")
+    click.echo(f"=== Task Execution Start [Hash: {task_hash}] ===")
     if hasattr(module, "execute"):
         known_vars = module.execute(task_dir=task_dir)
         if verbose:
@@ -149,12 +184,13 @@ def task_exec(task_name, file="main", verbose=False):
             click.echo(f"Results:\n{json.dumps(known_vars, indent=2, ensure_ascii=False)}")
             click.echo("=== Task Results ===")
         else:
-            click.echo(f"Executed {task_name}/{file}.py successfully")
-        logger.info(f"Executed task: {task_name}/{file}.py")
+            result_summary = known_vars.get("result", "No result returned") if isinstance(known_vars, dict) else "Executed"
+            click.echo(f"Task {task_hash} executed: {result_summary}")
+        logger.info(f"Executed task: {task_hash}/{file}.py")
     else:
         click.echo(f"No 'execute' function found in {script_file}")
         logger.error(f"No 'execute' function in {script_file}")
-    click.echo("=== Task Execution ED ===")
+    click.echo(f"=== Task Execution End [Hash: {task_hash}] ===")
 
 @cli.command("script-add")
 @click.argument("script_name")

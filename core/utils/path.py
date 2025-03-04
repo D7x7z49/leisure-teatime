@@ -19,5 +19,5 @@ def generate_task_name(url: str) -> str:
 def generate_task_dir(task_dir: Path, task_name: str) -> Path:
     """Generate task directory with domain and short hash."""
     domain = ".".join(task_name.split(".")[:-1])
-    short_hash = generate_hash(task_name)[:5]
+    short_hash = generate_hash(task_name)[:6]
     return task_dir / domain / short_hash

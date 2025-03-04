@@ -21,6 +21,7 @@ class WorkConfig:
     CACHE_DIR = ROOT / "cache"
     SCRIPT_DIR = ROOT / "scripts"
     CONFIG_DIR = ROOT / "config"
+    TASK_DATA_FILE = ROOT / "task_data.json"
     TASK_CONFIG_FILE = CONFIG_DIR / "tasks.json"
     SCRIPT_CONFIG_FILE = CONFIG_DIR / "scripts.json"
     RAW_HTML_FILE = "index.html"
