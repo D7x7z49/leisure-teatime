@@ -158,30 +158,39 @@ def task_exec(task_name, file="main", verbose=False):
 
 @cli.command("script-add")
 @click.argument("script_name")
-@click.option("--request", is_flag=True, help="Add as a request task instead of a TUI command")
-@click.option("--method", default="GET", help="HTTP method for request task (e.g., GET, POST)")
-def script_add(script_name, request=False, method="GET"):
-    """Add a script to SCRIPT_DIR as a TUI command or request task."""
+def script_add(script_name):
+    """Add a script to SCRIPT_DIR as a TUI command."""
     script_dir = ensure_dir(_SCRIPT_DIR / script_name)
     script_file = script_dir / f"{script_name}.py"
 
-    template = Config.TEMPLATES.REQUEST_TEMPLATE if request else Config.TEMPLATES.TUI_CMD_TEMPLATE
-    help_text = f"Execute {script_name} {'request' if request else 'command'}"
-    docstring = f"Custom {'request' if request else 'command'} for {script_name}"
+    template = Config.TEMPLATES.TUI_CMD_TEMPLATE
+    help_text = f"Execute custom command {script_name}"
+    docstring = f"Custom command for {script_name}"
     content = template.format(
         filename=script_file.name,
         cmd_name=script_name,
-        func_name=f"run_{script_name.replace('-', '_')}",
-        method=method.upper(),
+        func_name=script_name.replace('-', '_'),
         help_text=help_text,
         docstring=docstring
     )
 
-    if write_file(script_file, content):
+    if not write_file(script_file, content):
+        click.echo(f"Failed to add script: {script_file}")
+        return
+
+    config = read_json(_SCRIPT_CONFIG) or {"scripts": {}}
+    scripts = config.get("scripts", {})
+    script_data = {"dir": str(script_dir)}
+    scripts[script_name] = script_data
+    config["scripts"] = scripts
+
+    if write_json(_SCRIPT_CONFIG, config):
         click.echo(f"Script added: {script_file}")
         logger.info(f"Script added: {script_file}")
     else:
-        click.echo(f"Failed to add script: {script_file}")
+        click.echo(f"Failed to update config for script: {script_name}")
+        if script_file.exists():
+            script_file.unlink()
 
 @cli.command("script-list")
 def script_list():
@@ -192,8 +201,7 @@ def script_list():
         click.echo("No scripts found")
         return
     for name, data in scripts.items():
-        script_type = "Request" if "method" in data else "Command"
-        click.echo(f"{name} ({script_type}) - {data['dir']}")
+        click.echo(f"{name} - {data['dir']}")
 
 @cli.command("script-remove")
 @click.argument("name")
@@ -227,13 +235,10 @@ def interactive():
     async def run_tui():
         browser = await AsyncBrowserManager.instance()
         page = await browser.new_page()
-        await page.goto("about:blank")  # 初始化页面
+        await page.goto("about:blank")
 
-        # 命令补全
-        commands = list(AsyncBrowserManager._registry.keys()) + ["exit", "help"]
+        commands = list(AsyncBrowserManager._registry.keys()) + ["exit"]
         completer = WordCompleter(commands, ignore_case=True)
-
-        # 会话配置
         history_path = str(ensure_dir(_SCRIPT_DIR / ".tui_history") / "history")
         session = PromptSession(
             "TUI> ",
@@ -247,7 +252,6 @@ def interactive():
         click.echo("Interactive TUI started. Type 'help' for commands, 'exit' or Ctrl+C to quit.")
         while True:
             try:
-                # 动态提示符显示页面 URL
                 url = page.url if not page.is_closed() else "Closed"
                 prompt = f"TUI ({url[:20]}...)> " if len(url) > 20 else f"TUI ({url})> "
                 cmd = await session.prompt_async(prompt)
@@ -259,48 +263,16 @@ def interactive():
                     break
                 parts = shlex.split(cmd)
                 cmd_name, args = parts[0], parts[1:] if len(parts) > 1 else []
-
-                if cmd_name == "help":
-                    if not args:
-                        # 显示所有命令的简短帮助
-                        click.echo("Available commands:")
-                        for name, info in AsyncBrowserManager._registry.items():
-                            short_help = info['help'].split('\n')[0]  # 提取第一行作为简短描述
-                            click.echo(f"  {name}: {short_help}")
-                    elif len(args) == 1:
-                        # 显示指定命令的详细帮助
-                        help_cmd = args[0]
-                        if help_cmd in AsyncBrowserManager._registry:
-                            click.echo(AsyncBrowserManager._registry[help_cmd]['help'])
-                        else:
-                            click.echo(f"Unknown command: {help_cmd}")
-                    else:
-                        click.echo("Usage: help [command]")
+                if cmd_name in AsyncBrowserManager._registry:
+                    result = await browser.execute(cmd_name, page, *args)
+                    click.echo(result)
                 else:
-                    # 检查页面是否关闭，若关闭则重新创建
-                    if page.is_closed():
-                        page = await browser.new_page()
-                        await page.goto("about:blank")
-                        logger.debug("Recreated closed page")
-
-                    # 执行命令
-                    parts = shlex.split(cmd)
-                    cmd_name, args = parts[0], parts[1:] if len(parts) > 1 else []
-                    if cmd_name in AsyncBrowserManager._registry:
-                        result = await browser.execute(cmd_name, page, *args)
-                        click.echo(result)
-                    else:
-                        click.echo("Unknown command. Type 'help' for available commands.")
+                    click.echo(f"Unknown command: {cmd_name}. Type 'help' for available commands.")
             except Exception as e:
                 logger.error(f"TUI error: {e}")
                 click.echo(f"Error: {e}")
-                # 如果上下文关闭，退出 TUI
-                if "closed" in str(e).lower():
-                    click.echo("Browser context closed, exiting TUI...")
-                    break
-            await asyncio.sleep(1)  # 降低循环频率
+            await asyncio.sleep(1)
 
-        # 清理资源
         if not page.is_closed():
             await page.close()
         await browser.close()

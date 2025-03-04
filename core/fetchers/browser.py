@@ -1,6 +1,6 @@
 # core/fetchers/browser.py
 from playwright.sync_api import sync_playwright, Playwright as SyncPlaywright
-from playwright.async_api import async_playwright, Playwright as AsyncPlaywright, Page, APIResponse
+from playwright.async_api import async_playwright, Playwright as AsyncPlaywright, Page, APIResponse, APIRequestContext
 from core.config import Config
 from core.logging import get_logger, LogTemplates
 from core.utils.files import ensure_dir, read_file
@@ -79,6 +79,7 @@ class AsyncBrowserManager:
     def __init__(self):
         self._playwright: AsyncPlaywright = None
         self._context = None
+        self._request_context: APIRequestContext = None
 
     @classmethod
     async def instance(cls):
@@ -100,6 +101,7 @@ class AsyncBrowserManager:
                 executable_path=_EXECUTABLE_PATH,
                 devtools=True,
             )
+            self._request_context = self._context.request
             logger.debug(f"Initialized async browser context with {user_data_dir}, DevTools enabled")
         except Exception as e:
             logger.error(LogTemplates.ERROR.format(msg=f"Browser init failed: {e}"))
@@ -116,36 +118,6 @@ class AsyncBrowserManager:
         if self._playwright:
             await self._playwright.stop()
         logger.debug("Async browser context closed")
-
-    @classmethod
-    def tui_cmd_register(cls, name: str, help: str = ""):
-        """Register a TUI command."""
-        def decorator(func: Callable):
-            cls._registry[name] = {"func": func, "help": help or func.__doc__ or ""}
-            return func
-        return decorator
-
-    @classmethod
-    def request_register(cls, name: str, method: str = "GET", help: str = ""):
-        """Register an HTTP request task with specified method."""
-        def decorator(func: Callable):
-            @wraps(func)
-            async def wrapper(page: Page, url: str, *args, **kwargs):
-                try:
-                    headers = kwargs.get("headers", {})
-                    data = kwargs.get("data", None)
-                    timeout = kwargs.get("timeout", _TIMEOUT)
-                    response = await page.request.fetch(url, method=method, headers=headers, post_data=data, timeout=timeout)
-                    content_type = response.headers.get("content-type", "")
-                    if "application/json" in content_type:
-                        return await response.json()
-                    return await response.text()
-                except Exception as e:
-                    logger.error(LogTemplates.ERROR.format(msg=f"Request {name} failed: {e}"))
-                    return f"Error: {e}"
-            cls._registry[name] = {"func": wrapper, "help": help or func.__doc__ or ""}
-            return func
-        return decorator
 
     @classmethod
     def _load_scripts(cls):
@@ -165,130 +137,34 @@ class AsyncBrowserManager:
             except Exception as e:
                 logger.error(LogTemplates.ERROR.format(msg=f"Failed to load script {script_file}: {e}"))
 
+    @classmethod
+    def tui_cmd_register(cls, name: str, help: str = ""):
+        """Register a TUI command with Page and APIRequestContext injection."""
+        def decorator(func: Callable):
+            @wraps(func)
+            async def wrapper(self, request_context: APIRequestContext, *args, page: Page = None, **kwargs):
+                try:
+                    return await func(*args, page=page)
+                except Exception as e:
+                    logger.error(LogTemplates.ERROR.format(msg=f"Command {name} failed: {e}"))
+                    return f"Error: {e}"
+            cls._registry[name] = {"func": wrapper, "help": help or func.__doc__ or ""}
+            return func
+        return decorator
+
+    # 移除 request_register 和默认 get/post 命令
     async def execute(self, name: str, page: Page, *args, **kwargs) -> Any:
-        """Execute registered operation."""
+        """Execute registered operation with page or request context."""
         if name not in self._registry:
             raise ValueError(f"Operation '{name}' not registered")
-        return await self._registry[name]["func"](page, *args, **kwargs)
 
-# TUI Commands (Defined outside class)
-async def fetch_url(page: Page, url: str) -> str:
-    """Fetch page content asynchronously."""
-    content = await page.goto(url)
-    if content:
-        text = await page.content()
-        return text[:100] + "..." if len(text) > 100 else text
-    logger.error(LogTemplates.ERROR.format(msg=f"Failed to fetch {url}"))
-    return "Fetch failed"
+        if page.is_closed():
+            logger.debug("Page closed, creating new page")
+            page = await self.new_page()
+            await page.goto("about:blank")
 
-async def run_js(page: Page, code: str) -> str:
-    """Run JavaScript code asynchronously in the current page context."""
-    try:
-        result = await page.evaluate(code)
-        if result is None:
-            return "Result: Executed (no return value)"
-        return f"Result: {result}"
-    except Exception as e:
-        logger.error(LogTemplates.ERROR.format(msg=f"JavaScript execution failed: {e}"))
-        return f"Error: {e}"
+        return await self._registry[name]["func"](self, self._request_context, *args, page=page, **kwargs)
 
-async def run_js_file(page: Page, filename: str) -> str:
-    """Run a JavaScript file from SCRIPT_DIR in the current page context."""
-    script_path = Path(_SCRIPT_DIR) / filename
-    if not script_path.suffix:
-        script_path = script_path.with_suffix(".js")
-    if not script_path.exists():
-        logger.error(LogTemplates.ERROR.format(msg=f"JavaScript file {script_path} not found"))
-        return f"Error: File {script_path} not found"
-    try:
-        script_content = read_file(script_path)
-        if script_content is None:
-            return f"Error: Failed to read {script_path}"
-        wrapped_script = f"(async () => {{ {script_content} }})()"
-        result = await page.evaluate(wrapped_script)
-        if result is None:
-            return "Result: Executed (no return value)"
-        return f"Result: {result}"
-    except Exception as e:
-        logger.error(LogTemplates.ERROR.format(msg=f"JavaScript file execution failed: {e}"))
-        return f"Error: {e}"
 
-async def show_status(page: Page) -> str:
-    """Show status of the current page."""
-    try:
-        url = page.url if not page.is_closed() else "Closed"
-        status = "Open" if not page.is_closed() else "Closed"
-        return f"Page Status: {status}, URL: {url}"
-    except Exception as e:
-        logger.error(LogTemplates.ERROR.format(msg=f"Status check failed: {e}"))
-        return f"Error: {e}"
-
-async def refresh_scripts(page: Page) -> str:
-    """Refresh TUI commands by reloading scripts from SCRIPT_DIR."""
-    try:
-        AsyncBrowserManager._load_scripts() # Use self instead of cls
-        return "Commands refreshed successfully"
-    except Exception as e:
-        logger.error(LogTemplates.ERROR.format(msg=f"Refresh failed: {e}"))
-        return f"Error: {e}"
-
-# Register TUI commands outside class
-AsyncBrowserManager.tui_cmd_register("fetch", help="""\
-Fetch and display webpage content.
-
-    USAGE:
-      fetch <url>
-
-    ARGUMENTS:
-      url       Target URL to fetch (required)
-
-    EXAMPLES:
-      fetch https://example.com
-      fetch https://api.example.com/data --timeout=5000
-""")(fetch_url)
-
-AsyncBrowserManager.tui_cmd_register("js", help="""\
-Execute JavaScript code in current page context.
-
-    USAGE:
-      js <code> [--silent]
-
-    ARGUMENTS:
-      code      JavaScript code to execute, prefix with @ to load from file
-
-    EXAMPLES:
-      js document.title
-""")(run_js)
-
-AsyncBrowserManager.tui_cmd_register("js_file", help="""\
-Execute JavaScript file from SCRIPT_DIR.
-
-    USAGE:
-      js_file <filename>
-
-    ARGUMENTS:
-      filename  JS file name (with or without .js extension)
-
-    EXAMPLES:
-      js_file tracking
-""")(run_js_file)
-
-AsyncBrowserManager.tui_cmd_register("status", help="""\
-Show current page status.
-
-    USAGE:
-      status
-""")(show_status)
-
-# Request Tasks (Defined outside class)
-async def get_request(page: Page, url: str, **kwargs) -> str:
-    """Perform a GET request on the current page."""
-    pass  # Handled by request_register decorator
-
-async def post_request(page: Page, url: str, **kwargs) -> str:
-    """Perform a POST request on the current page."""
-    pass  # Handled by request_register decorator
-
-# Register request tasks outside class
-AsyncBrowserManager.request_register("get", method="GET", help="Perform a GET request. Usage: get ...")(get_request)
-AsyncBrowserManager.request_register("post", method="POST", help="Perform a POST request. Usage: post ...")(post_request)
+# 导入 TUI 命令
+from core.fetchers.tui_cmd import *

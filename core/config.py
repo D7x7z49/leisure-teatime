@@ -48,30 +48,21 @@ class TemplatesConfig:
 # {filename}
 from core.fetchers.browser import AsyncBrowserManager
 
-@AsyncBrowserManager.tui_cmd_register("{cmd_name}", help="{help_text}")
-async def {func_name}(page, *args):
-    """{docstring}
+@AsyncBrowserManager.tui_cmd_register("{cmd_name}", help="""\
+{help_text}
 
-    Example:
-        # Process args and return a custom result
-        return f"Args received: {{args}}"
-    """
-    return "Result: Command executed"
-'''
+    USAGE:
+      {cmd_name} <args>
 
-    REQUEST_TEMPLATE = '''\
-# {filename}
-from core.fetchers.browser import AsyncBrowserManager
+    ARGUMENTS:
+      args      Custom arguments for the command
 
-@AsyncBrowserManager.request_register("{cmd_name}", method="{method}", help="{help_text}")
-async def {func_name}(page, url, **kwargs):
-    """{docstring}
-
-    Example:
-        # Process url and kwargs for a custom request
-        return f"Request to {{url}} with kwargs: {{kwargs}}"
-    """
-    return "Result: Request executed"
+    EXAMPLES:
+      {cmd_name} example_arg
+""")
+async def tui_{func_name}(page, *args):
+    """{docstring}"""
+    return "Result: Command {cmd_name} executed with args: {{args}}"
 '''
 
 class Config:
