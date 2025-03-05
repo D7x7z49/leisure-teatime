@@ -1,6 +1,6 @@
 # core/fetchers/tui_cmd.py
-from playwright.async_api import Page, APIRequestContext
-from core.config import Config
+from playwright.async_api import Page
+from core.config import Paths
 from core.fetchers.browser import AsyncBrowserManager
 from core.logging import get_logger, LogTemplates
 from core.utils.files import read_file
@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Optional
 
 logger = get_logger("tui_cmd")
-_SCRIPT_DIR = Config.WORK.SCRIPT_DIR
 
 @AsyncBrowserManager.tui_cmd_register("fetch", help="""\
 Fetch and display webpage content.
@@ -57,7 +56,7 @@ async def tui_js(page: Page, code: str) -> str:
     """Execute JavaScript code or file in the current page context."""
     try:
         if code.startswith("@"):
-            script_path = Path(_SCRIPT_DIR) / code[1:]
+            script_path = Paths.SCRIPTS_DIR / code[1:]
             if not script_path.suffix:
                 script_path = script_path.with_suffix(".js")
             if not script_path.exists():
