@@ -12,7 +12,7 @@ from core.config import StaticConfig, Paths
 from core.manager import TaskDataManager, ScriptDataManager
 from core.fetchers.browser import fetch_page, AsyncBrowserManager
 from core.logging import get_logger
-from core.utils.files import write_file
+from core.utils.files import write_file  # 更新导入
 import importlib.util
 
 logger = get_logger("cli")
