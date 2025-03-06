@@ -18,7 +18,13 @@ class StaticConfig:
     class Browser:
         HEADLESS = False
         TIMEOUT = 30000
-        BLOCKED_RESOURCES: List[str] = ["**/*.{png,jpg,jpeg,gif}"]
+        BLOCKED_RESOURCES: List[str] = [
+            "**/*.{png,jpg,jpeg,gif}",      # 图片
+            "**/*.{mp4,webm,ogg,mov,avi}",  # 视频
+            "**/*.{mp3,wav,flac,aac}",      # 音频
+            "**/*.{woff,woff2,ttf,eot}",    # 字体
+            "**/*.{ico,svg}",               # 图标
+        ]
         EXECUTABLE_PATH = os.getenv("LEISURE_TEATIME_BROWSER_EXECUTABLE_PATH")
 
     class Templates:

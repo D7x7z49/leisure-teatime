@@ -12,7 +12,7 @@ import importlib.util
 logger = get_logger("browser")
 
 def with_sync_page(func: Callable) -> Callable:
-    """Decorator to inject a Playwright page for sync operations."""
+    """Decorator to inject a Playwright page for sync operations with optimized resource blocking."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         with sync_playwright() as p:
@@ -22,17 +22,27 @@ def with_sync_page(func: Callable) -> Callable:
                 executable_path=StaticConfig.Browser.EXECUTABLE_PATH,
             )
             page = context.new_page()
+            # 优化拦截逻辑
+            def block_resources(route):
+                if any(route.request.resource_type in ["image", "media", "font"] for pattern in StaticConfig.Browser.BLOCKED_RESOURCES):
+                    route.abort()
+                else:
+                    route.continue_()
             for pattern in StaticConfig.Browser.BLOCKED_RESOURCES:
-                page.route(pattern, lambda route: route.abort())
+                page.route(pattern, block_resources)
             try:
-                return func(page, *args, **kwargs)
+                result = func(page, *args, **kwargs)
+                return result
+            except Exception as e:
+                logger.error(LogTemplates.ERROR.format(msg=f"Page operation failed: {e}"))
+                raise
             finally:
                 context.close()
     return wrapper
 
 @with_sync_page
 def fetch_page(page: Page, url: str, timeout: int = StaticConfig.Browser.TIMEOUT) -> Tuple[str, str, int]:
-    """Fetch raw content, rendered content, and resource count in one pass."""
+    """Fetch raw content, rendered content, and resource count with faster DOM loading."""
     logger.info(LogTemplates.FETCH_START.format(url=url))
     resources = []
     raw_content = None
@@ -40,13 +50,22 @@ def fetch_page(page: Page, url: str, timeout: int = StaticConfig.Browser.TIMEOUT
     def capture_response(response):
         nonlocal raw_content
         if response.url == url:
-            raw_content = response.text()
+            try:
+                raw_content = response.text()
+            except Exception as e:
+                logger.warning(f"Failed to capture raw content: {e}")
 
     page.on("response", capture_response)
     page.on("response", lambda r: resources.append(r.url))
-    page.goto(url, timeout=timeout, wait_until="networkidle")
-    dom_content = page.content()
-    resource_count = len(set(resources))
+    try:
+        # 使用 domcontentloaded 代替 networkidle，加快 DOM 获取
+        page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+        dom_content = page.content()
+        resource_count = len(set(resources))
+    except Exception as e:
+        logger.error(LogTemplates.ERROR.format(msg=f"Fetch failed for {url}: {e}"))
+        dom_content = page.content() if page else ""  # 超时后尝试获取已有内容
+        resource_count = len(set(resources))
 
     logger.info(LogTemplates.FETCH_SUCCESS.format(url=url, size=len(dom_content)))
     logger.debug(f"Loaded {resource_count} unique resources")
@@ -54,12 +73,19 @@ def fetch_page(page: Page, url: str, timeout: int = StaticConfig.Browser.TIMEOUT
 
 @with_sync_page
 def analyze_page(page: Page, url: str, timeout: int = StaticConfig.Browser.TIMEOUT) -> Dict[str, Any]:
-    """Analyze page dynamism."""
+    """Analyze page dynamism with faster DOM loading."""
     logger.info(LogTemplates.FETCH_START.format(url=url))
-    page.goto(url, timeout=timeout, wait_until="networkidle")
-    initial_content = page.evaluate("document.documentElement.outerHTML")
-    final_content = page.content()
-    is_dynamic = "partial" if final_content != initial_content else "static"
+    try:
+        # 使用 domcontentloaded 代替 networkidle
+        page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+        initial_content = page.evaluate("document.documentElement.outerHTML")
+        final_content = page.content()
+        is_dynamic = "partial" if final_content != initial_content else "static"
+    except Exception as e:
+        logger.error(LogTemplates.ERROR.format(msg=f"Analyze failed for {url}: {e}"))
+        final_content = page.content() if page else ""
+        is_dynamic = "unknown"
+
     logger.info(LogTemplates.FETCH_SUCCESS.format(url=url, size=len(final_content)))
     return {"content": final_content, "is_dynamic": is_dynamic}
 
