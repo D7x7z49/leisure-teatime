@@ -186,3 +186,13 @@ class AsyncBrowserManager:
 
 # 导入 TUI 命令
 from core.fetchers.tui_cmd import *
+
+
+async def setup_async_page(page: Page):
+    def block_resources(route):
+        if any(route.request.resource_type in ["image", "media", "font"] for pattern in StaticConfig.Browser.BLOCKED_RESOURCES):
+            route.abort()
+        else:
+            route.continue_()
+    for pattern in StaticConfig.Browser.BLOCKED_RESOURCES:
+        await page.route(pattern, block_resources)

@@ -12,7 +12,8 @@ dependencies = [
     "prompt-toolkit>=3.0.48",
     "lxml>=5.3.1",
     "ijson>=3.3.0",
-    "aiofiles>=23.2.1",
+    "aiofiles>=22.1.0,<23",
+    "jupyterlab>=3.6.8",
 ]
 requires-python = ">=3.7"
 readme = "README.md"
