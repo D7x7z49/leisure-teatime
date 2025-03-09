@@ -13,7 +13,11 @@ dependencies = [
     "lxml>=5.3.1",
     "ijson>=3.3.0",
     "aiofiles>=22.1.0,<23",
-    "jupyterlab>=3.6.8",
+    "pyautogui>=0.9.54",
+    "apscheduler>=3.10.4",
+    "pillow==9.5.0",
+    "pywinpty==1.1.6",
+    "jupyterlab==3.6.6",
 ]
 requires-python = ">=3.7"
 readme = "README.md"
