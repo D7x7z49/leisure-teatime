@@ -12,14 +12,14 @@ dependencies = [
     "prompt-toolkit>=3.0.48",
     "lxml>=5.3.1",
     "ijson>=3.3.0",
-    "aiofiles>=22.1.0,<23",
     "pyautogui>=0.9.54",
     "apscheduler>=3.10.4",
-    "pillow==9.5.0",
-    "pywinpty==1.1.6",
-    "jupyterlab==3.6.6",
+    "aiofiles>=24.1.0",
+    "pandas>=2.2.3",
+    "matplotlib>=3.10.1",
+    "jupyterlab>=4.3.5",
 ]
-requires-python = ">=3.7"
+requires-python = ">=3.12"
 readme = "README.md"
 license = {text = "MIT"}
 
