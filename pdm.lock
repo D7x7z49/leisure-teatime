@@ -5,7 +5,7 @@
 groups = ["default"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:1c8857408aca60132bc11e0aeb88dc7fa19e60617872a1f89b43fbbf65e9691d"
+content_hash = "sha256:3ccb9a1332e9138e5bb9a1763de82bcb76957c90ecd0479d34ad90763c80bc12"
 
 [[metadata.targets]]
 requires_python = ">=3.12"
@@ -1655,6 +1655,21 @@ files = [
     {file = "pydantic_core-2.27.2-cp313-cp313-win_amd64.whl", hash = "sha256:953101387ecf2f5652883208769a79e48db18c6df442568a0b5ccd8c2723abee"},
     {file = "pydantic_core-2.27.2-cp313-cp313-win_arm64.whl", hash = "sha256:ac4dbfd1691affb8f48c2c13241a2e3b60ff23247cbcf981759c768b6633cf8b"},
     {file = "pydantic_core-2.27.2.tar.gz", hash = "sha256:eb026e5a4c1fee05726072337ff51d1efb6f59090b7da90d30ea58625b1ffb39"},
+]
+
+[[package]]
+name = "pydantic-settings"
+version = "2.8.1"
+requires_python = ">=3.8"
+summary = "Settings management using Pydantic"
+groups = ["default"]
+dependencies = [
+    "pydantic>=2.7.0",
+    "python-dotenv>=0.21.0",
+]
+files = [
+    {file = "pydantic_settings-2.8.1-py3-none-any.whl", hash = "sha256:81942d5ac3d905f7f3ee1a70df5dfb62d5569c12f51a5a647defc1c3d9ee2e9c"},
+    {file = "pydantic_settings-2.8.1.tar.gz", hash = "sha256:d5c663dfbe9db9d5e1c646b2e161da12f0d734d422ee56f567d0ea2cee4e8585"},
 ]
 
 [[package]]
