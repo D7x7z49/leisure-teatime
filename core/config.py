@@ -1,94 +1,73 @@
 # core/config.py
-import os
 from pathlib import Path
-from dotenv import load_dotenv
-from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+import platform
+from typing import Optional
 
-load_dotenv()
+WORKSPACE_ROOT = Path(__file__).parent.parent / "work"
 
-PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+def get_default_browser_executable_path() -> Optional[Path]:
+    # Check environment variable
+    env_path = os.getenv("LEISURE_BROWSER_EXECUTABLE_PATH")
+    if env_path:
+        return Path(env_path)
 
+    # Check common default locations based on system
+    system = platform.system().lower()
+    possible_paths = []
 
-class StaticConfig:
-    """Static application configuration."""
-    class Log:
-        LEVEL = "info"
-        FILENAME = "teatime.log"
+    if system == "windows":
+        possible_paths.extend([
+            Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+            Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"),
+        ])
+    elif system == "darwin":  # macOS
+        possible_paths.append(
+            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        )
+    elif system == "linux":
+        possible_paths.extend([
+            Path("/usr/bin/google-chrome"),
+            Path("/usr/lib/chromium-browser/chrome"),
+        ])
 
-    class Browser:
-        HEADLESS = False
-        TIMEOUT = 30000
-        BLOCKED_RESOURCES: List[str] = [
-            "**/*.{png,jpg,jpeg,gif}",      # 图片
-            "**/*.{mp4,webm,ogg,mov,avi}",  # 视频
-            "**/*.{mp3,wav,flac,aac}",      # 音频
-            "**/*.{woff,woff2,ttf,eot}",    # 字体
-            "**/*.{ico,svg}",               # 图标
-        ]
-        EXECUTABLE_PATH = os.getenv("LEISURE_TEATIME_BROWSER_EXECUTABLE_PATH")
+    for path in possible_paths:
+        if path.exists():
+            return path
 
-    class Templates:
-        FILES = [
-            {"source": "MAIN.py", "target": "main.py"},
-            {"source": "TEXT.py", "target": "text.py"},
-            {"source": "TEST.py", "target": "test.py"}
-        ]
-        TUI_CMD_TEMPLATE = '''\
-# {filename}
-from core.fetchers.browser import AsyncBrowserManager
+    return None
 
-@AsyncBrowserManager.tui_cmd_register("{cmd_name}", help="""\
-{help_text}
+class Config(BaseSettings):
+    # logs
+    log_level: str = "INFO"
+    log_dir: Path = WORKSPACE_ROOT / "logs"
 
-    USAGE:
-      {cmd_name} <args>
+    # browser
+    browser_executable_path: Optional[Path] = get_default_browser_executable_path()
+    browser_user_data_dir: Path = WORKSPACE_ROOT / ".browser"
+    browser_headless: bool = False
+    browser_timeout: int = 60000
 
-    ARGUMENTS:
-      args      Custom arguments for the command
+    # tasks
+    tasks_dir: Path = WORKSPACE_ROOT / "tasks"
+    tasks_metadata_file: Path = WORKSPACE_ROOT / "metadata.json"
 
-    EXAMPLES:
-      {cmd_name} example_arg
-""")
-async def tui_{func_name}(page, *args, **kwargs):
-    """{docstring}"""
-    return "Result: Command {cmd_name} executed with args: {{args}}"
-'''
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="LEISURE_",
+        extra="ignore",
+    )
 
+    def ensure_exists(self) -> None:
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.browser_user_data_dir.mkdir(parents=True, exist_ok=True)
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        if not self.tasks_metadata_file.exists():
+            self.tasks_metadata_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.tasks_metadata_file, "w", encoding="utf-8") as f:
+                f.write('{"data": {}}')
 
-class Paths:
-    """Path management for directories and files."""
-    WORK_DIR = PROJECT_ROOT / "work"
-    LOG_DIR = PROJECT_ROOT / "logs"
-    BROWSER_DIR = PROJECT_ROOT / ".browser"
-    TEMPLATES_DIR = PROJECT_ROOT / "templates"
-
-    # Work subdirectories
-    TASKS_DIR = WORK_DIR / "tasks"
-    CACHE_DIR = WORK_DIR / "cache"
-    SCRIPTS_DIR = WORK_DIR / "scripts"
-    CONFIG_DIR = WORK_DIR / "config"
-
-    # Data files
-    TASKS_DATA = WORK_DIR / "tasks_data.json"
-    SCRIPTS_DATA = WORK_DIR / "scripts_data.json"
-
-    # Task-specific files
-    RAW_HTML_FILE = "index.html"
-    DOM_HTML_FILE = "dom.html"
-
-    # Browser-specific
-    BROWSER_DATA_DIR = BROWSER_DIR / "data"
-
-    @staticmethod
-    def ensure_all():
-        """Ensure all directories and data files exist."""
-        for attr, value in Paths.__dict__.items():
-            if isinstance(value, Path):
-                if attr.endswith("_DATA"):
-                    value.parent.mkdir(exist_ok=True, parents=True)
-                    if not value.exists():
-                        value.touch()
-                elif attr.endswith("_DIR"):
-                    value.mkdir(exist_ok=True, parents=True)
-
-Paths.ensure_all()
+CONFIG = Config()
+CONFIG.ensure_exists()
