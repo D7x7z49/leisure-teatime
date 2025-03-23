@@ -19,7 +19,8 @@ dependencies = [
     "matplotlib>=3.10.1",
     "jupyterlab>=4.3.5",
     "pydantic>=2.10.6",
-    "pydantic-settings>=2.8.1"
+    "psutil>=7.0.0",
+    "openpyxl>=3.1.5"
 
 ]
 requires-python = ">=3.12"
@@ -32,4 +33,11 @@ distribution = false
 
 
 [tool.pdm.scripts]
-dev = "python -m core.cli"
+dev = "python -m core.cli.commands"
+
+add = "python -m core.cli.commands add {args}"
+use = "python -m core.cli.commands use {args}"
+list = "python -m core.cli.commands list"
+remove = "python -m core.cli.commands remove {args}"
+alias = "python -m core.cli.commands alias {args}"
+history = "python -m core.cli.commands history"

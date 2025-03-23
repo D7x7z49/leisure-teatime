@@ -1,94 +1,86 @@
 # core/config.py
-import os
 from pathlib import Path
-from dotenv import load_dotenv
-from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+import platform
+from typing import List, Optional
 
-load_dotenv()
+def get_default_browser_executable_path() -> Optional[Path]:
+    env_path = os.getenv("LEISURE_BROWSER_EXECUTABLE_PATH")
+    if env_path:
+        return Path(env_path)
 
-PROJECT_ROOT = Path(__file__).parent.parent.absolute()
-
-
-class StaticConfig:
-    """Static application configuration."""
-    class Log:
-        LEVEL = "info"
-        FILENAME = "teatime.log"
-
-    class Browser:
-        HEADLESS = False
-        TIMEOUT = 30000
-        BLOCKED_RESOURCES: List[str] = [
-            "**/*.{png,jpg,jpeg,gif}",      # 图片
-            "**/*.{mp4,webm,ogg,mov,avi}",  # 视频
-            "**/*.{mp3,wav,flac,aac}",      # 音频
-            "**/*.{woff,woff2,ttf,eot}",    # 字体
-            "**/*.{ico,svg}",               # 图标
+    system = platform.system().lower()
+    possible_paths = (
+        [
+            Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+            Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe")
         ]
-        EXECUTABLE_PATH = os.getenv("LEISURE_TEATIME_BROWSER_EXECUTABLE_PATH")
+        if system == "windows" else
+        [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")]
+        if system == "darwin" else
+        [Path("/usr/bin/google-chrome"), Path("/usr/lib/chromium-browser/chrome")]
+    )
+    path = next((p for p in possible_paths if p.exists()), None)
+    if path is None:
+        print("Warning: No default browser found. Set LEISURE_BROWSER_EXECUTABLE_PATH in .env.")
+    return path
 
-    class Templates:
-        FILES = [
-            {"source": "MAIN.py", "target": "main.py"},
-            {"source": "TEXT.py", "target": "text.py"},
-            {"source": "TEST.py", "target": "test.py"}
-        ]
-        TUI_CMD_TEMPLATE = '''\
-# {filename}
-from core.fetchers.browser import AsyncBrowserManager
+class Config(BaseSettings):
+    # workspace
+    template_dir: Path = Path(__file__).parent.parent / "templates"
+    workspace_root: Path = Path(__file__).parent.parent / "work"
 
-@AsyncBrowserManager.tui_cmd_register("{cmd_name}", help="""\
-{help_text}
+    # logs
+    log_level: str = "INFO"
+    log_dir: Path = workspace_root / "logs"
+    log_filename: str = "leisure-teatime.log"
 
-    USAGE:
-      {cmd_name} <args>
+    # browser
+    browser_executable_path: Optional[Path] = get_default_browser_executable_path()
+    browser_user_data_dir: Path = workspace_root / ".browser"
+    browser_headless: bool = False
+    browser_timeout: int = 60000
+    browser_cdp_port: int = 9222
 
-    ARGUMENTS:
-      args      Custom arguments for the command
+    # browser launch args
+    chrome_cdp_launch_args: List[str] = [
+        f"--remote-debugging-port={browser_cdp_port}",
+        f"--user-data-dir={browser_user_data_dir}",
+        "--no-first-run",
+        "--disable-popup-blocking",
+        "--disable-extensions",
+        "--disable-blink-features=AutomationControlled",
+    ]
 
-    EXAMPLES:
-      {cmd_name} example_arg
-""")
-async def tui_{func_name}(page, *args, **kwargs):
-    """{docstring}"""
-    return "Result: Command {cmd_name} executed with args: {{args}}"
-'''
+    # tasks
+    tasks_dir: Path = workspace_root / "tasks"
+    tasks_metadata_file: Path = workspace_root / "metadata.json"
+    tasks_main_dir: Path = workspace_root / "main"
 
+    # model config
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="LEISURE_",
+        extra="ignore",
+    )
 
-class Paths:
-    """Path management for directories and files."""
-    WORK_DIR = PROJECT_ROOT / "work"
-    LOG_DIR = PROJECT_ROOT / "logs"
-    BROWSER_DIR = PROJECT_ROOT / ".browser"
-    TEMPLATES_DIR = PROJECT_ROOT / "templates"
+    @property
+    def log_path(self) -> Path:
+        return self.log_dir / self.log_filename
 
-    # Work subdirectories
-    TASKS_DIR = WORK_DIR / "tasks"
-    CACHE_DIR = WORK_DIR / "cache"
-    SCRIPTS_DIR = WORK_DIR / "scripts"
-    CONFIG_DIR = WORK_DIR / "config"
+    def ensure_exists(self) -> None:
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            self.browser_user_data_dir.mkdir(parents=True, exist_ok=True)
+            self.tasks_dir.mkdir(parents=True, exist_ok=True)
+            if not self.tasks_metadata_file.exists():
+                self.tasks_metadata_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.tasks_metadata_file, "w", encoding="utf-8") as f:
+                    f.write('{"data": {}}')
+        except (OSError, IOError) as e:
+            raise RuntimeError(f"Failed to initialize workspace: {e}")
 
-    # Data files
-    TASKS_DATA = WORK_DIR / "tasks_data.json"
-    SCRIPTS_DATA = WORK_DIR / "scripts_data.json"
-
-    # Task-specific files
-    RAW_HTML_FILE = "index.html"
-    DOM_HTML_FILE = "dom.html"
-
-    # Browser-specific
-    BROWSER_DATA_DIR = BROWSER_DIR / "data"
-
-    @staticmethod
-    def ensure_all():
-        """Ensure all directories and data files exist."""
-        for attr, value in Paths.__dict__.items():
-            if isinstance(value, Path):
-                if attr.endswith("_DATA"):
-                    value.parent.mkdir(exist_ok=True, parents=True)
-                    if not value.exists():
-                        value.touch()
-                elif attr.endswith("_DIR"):
-                    value.mkdir(exist_ok=True, parents=True)
-
-Paths.ensure_all()
+CONFIG = Config()
+CONFIG.ensure_exists()

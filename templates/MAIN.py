@@ -1,29 +1,48 @@
-# templates/MAIN.py
+# templates/main.py
+import asyncio
 from pathlib import Path
-from core.utils.decorators import task_runner
+from playwright.async_api import BrowserContext, Page
+from core.browser.controller import with_cdp
+from core.browser.fetcher import initialize
+from core.data.storage import set_default_dir, save_file, read_file, file_exists
+from core.utils.functional import pipeline
 
-@task_runner(Path(__file__), "dom.html")
-def execute(data, known_vars):
-    """Execute main crawler function with HTML data and known variables.
+set_default_dir(Path(__file__).parent  / ".data")
 
-    Args:
-        data (str): HTML content from the task directory (e.g., dom.html).
-        known_vars (dict): Dictionary to store extracted data, initialized empty.
+async def init(context: BrowserContext) -> None:
+    pass
 
-    Example:
-        # Extract title and description
-        tree = html.fromstring(data)
-        known_vars["title"] = tree.xpath("//title/text()")[0]
-        known_vars["desc"] = tree.xpath("//meta[@name='description']/@content")[0] if tree.xpath("//meta[@name='description']") else "No description"
-    """
-    from lxml import html
 
-    if data:
-        tree = html.fromstring(data)
-        nodes = tree.xpath("//title")
-        known_vars["title"] = nodes[0].text if nodes else "No title found"
-    else:
-        known_vars["title"] = "No HTML data available"
+async def fetch_page(page: Page, url: str = "https://example.com") -> str:
+    await page.goto(url)
+    return await page.content()
+
+async def cache_content(content: str) -> str:
+    if content and not await file_exists("dom.html"):
+        await save_file(content, "dom.html")
+    return content or await read_file("dom.html")
+
+async def process_content(content: str) -> str:
+    return f"Processed {len(content)} bytes"
+
+async def save_result(result: str) -> None:
+    await save_file(result, "output.txt")
+    print(f"Saved: {result}")
+
+@with_cdp
+async def main(context: BrowserContext):
+    """Main task runner, define your pipeline here."""
+
+    initialize(context, init, is_anti_detection=True)
+
+    steps = [
+        lambda _: context.new_page(),
+        fetch_page,
+        cache_content,
+        process_content,
+        save_result,
+    ]
+    await pipeline(None, steps)
 
 if __name__ == "__main__":
-    execute()
+    asyncio.run(main())
